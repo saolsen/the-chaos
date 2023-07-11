@@ -199,13 +199,15 @@ fn mcts_agent(state: &Connect4State) -> Connect4Action {
         .map(|col| Connect4Action { column: col })
         .filter(|action| check_action(state, action))
         .map(|action| {
+            let mut next_state = state.clone();
+            apply_action(&mut next_state, &action).unwrap();
+
             // Simulate 100 games from this action.
             let score = (0..100)
                 .into_par_iter()
-                .map(|_| {
-                    let mut next_state = state.clone();
-                    apply_action(&mut next_state, &action).unwrap();
-                    match play(&mut next_state, rand_agent, rand_agent).unwrap() {
+                .map(move |_| {
+                    let mut state = next_state.clone();
+                    match play(&mut state, rand_agent, rand_agent).unwrap() {
                         Connect4Result::Winner(winner) => {
                             if winner == player {
                                 1
@@ -220,6 +222,7 @@ fn mcts_agent(state: &Connect4State) -> Connect4Action {
                 / 100.;
             (action, score)
         })
+        // Pick the action with the highest score.
         .max_by(|(_, score1), (_, score2)| score1.partial_cmp(score2).unwrap())
         .map(|(action, _)| action)
         .unwrap()
@@ -229,10 +232,11 @@ fn mcts_agent(state: &Connect4State) -> Connect4Action {
 // 0.24s for 10 release with rayon... slower...
 // 2.26s for 100 with rayon just the 0..100 loop
 // 1.82s for 100 with rayon everything, kewl
+// 1.8 if I make the main par too, obv output out of order now
 fn main() {
-    for i in 0..100 {
+    (0..100).into_par_iter().for_each(|i| {
         let mut state = Connect4State::default();
         let result = play(&mut state, rand_agent, mcts_agent).unwrap();
         println!("Game {}: {:?}", i, result);
-    }
+    });
 }
