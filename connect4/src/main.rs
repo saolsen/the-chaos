@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rayon::prelude::*;
 use thiserror::Error;
 
 const ROWS: usize = 6;
@@ -15,8 +15,8 @@ pub struct Connect4State {
     pub next_player: usize,
 }
 
-impl Connect4State {
-    pub fn new() -> Self {
+impl Default for Connect4State {
+    fn default() -> Self {
         Self {
             board: vec![None; ROWS * COLS],
             next_player: 0,
@@ -36,6 +36,7 @@ pub enum Connect4Check {
     Over(Connect4Result),
 }
 
+#[allow(clippy::identity_op)]
 pub fn check_state(state: &Connect4State) -> Connect4Check {
     use Connect4Check::*;
     use Connect4Result::*;
@@ -126,7 +127,7 @@ pub enum ActionError {
 }
 
 pub fn check_action(state: &Connect4State, action: &Connect4Action) -> bool {
-    if action.column >= COLS || action.column < 0 {
+    if action.column >= COLS {
         return false;
     }
     state.board[action.column * ROWS + ROWS - 1].is_none()
@@ -161,12 +162,12 @@ fn play(
 ) -> Result<Connect4Result, ActionError> {
     loop {
         let action = if state.next_player == 0 {
-            blue_agent(&state)
+            blue_agent(state)
         } else {
-            red_agent(&state)
+            red_agent(state)
         };
         apply_action(state, &action)?;
-        if let Connect4Check::Over(result) = check_state(&state) {
+        if let Connect4Check::Over(result) = check_state(state) {
             return Ok(result);
         }
     }
@@ -186,64 +187,51 @@ fn rand_agent(state: &Connect4State) -> Connect4Action {
     }
 }
 
-
 fn mcts_agent(state: &Connect4State) -> Connect4Action {
-    //use rayon::prelude::*;
-
     // For each possible action, take the action and then simulate multiple random games from that
     // state.
     // Keep track of the number of wins for each action.
     // Pick the action with the highest win rate.
     let player = state.next_player;
 
-    let mut actions = vec![];
-    for col in 0..COLS {
-        let action = Connect4Action { column: col };
-        if check_action(state, &action) {
-            actions.push(action);
-        }
-    }
-
-    let mut action_scores = HashMap::new();
-    for action in actions {
-        let mut wins: f32 = 0.;
-        let mut losses: f32 = 0.;
-        let mut ties: f32 = 0.;
-        for _ in 0..100 {
-            let mut next_state = state.clone();
-            apply_action(&mut next_state, &action).unwrap();
-            match play(&mut next_state, rand_agent, rand_agent).unwrap() {
-                Connect4Result::Winner(winner) => {
-                    if winner == player {
-                        wins += 1.;
-                    } else {
-                        losses += 1.;
+    (0..COLS)
+        .into_par_iter()
+        .map(|col| Connect4Action { column: col })
+        .filter(|action| check_action(state, action))
+        .map(|action| {
+            // Simulate 100 games from this action.
+            let score = (0..100)
+                .into_par_iter()
+                .map(|_| {
+                    let mut next_state = state.clone();
+                    apply_action(&mut next_state, &action).unwrap();
+                    match play(&mut next_state, rand_agent, rand_agent).unwrap() {
+                        Connect4Result::Winner(winner) => {
+                            if winner == player {
+                                1
+                            } else {
+                                -1
+                            }
+                        }
+                        Connect4Result::Tie => 0,
                     }
-                }
-                Connect4Result::Tie => {
-                    ties += 1.;
-                }
-            }
-        }
-        let score: f32 = (wins - losses) / (wins + losses + ties);
-        action_scores.insert(action.column, score);
-    }
-
-    let mut best_score: f32 = -1.;
-    let mut best_action = None;
-    for (action, score) in action_scores {
-        if score > best_score {
-            best_score = score;
-            best_action = Some(action);
-        }
-    }
-
-    Connect4Action{column: best_action.unwrap()}
+                })
+                .sum::<i32>() as f32
+                / 100.;
+            (action, score)
+        })
+        .max_by(|(_, score1), (_, score2)| score1.partial_cmp(score2).unwrap())
+        .map(|(action, _)| action)
+        .unwrap()
 }
 
+// 0.14s for 10 release
+// 0.24s for 10 release with rayon... slower...
+// 2.26s for 100 with rayon just the 0..100 loop
+// 1.82s for 100 with rayon everything, kewl
 fn main() {
-    for i in 0..10 {
-        let mut state = Connect4State::new();
+    for i in 0..100 {
+        let mut state = Connect4State::default();
         let result = play(&mut state, rand_agent, mcts_agent).unwrap();
         println!("Game {}: {:?}", i, result);
     }
