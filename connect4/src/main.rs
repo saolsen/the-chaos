@@ -1,5 +1,6 @@
 use rayon::prelude::*;
 use thiserror::Error;
+use tracing::{span, Level};
 
 const ROWS: usize = 6;
 const COLS: usize = 7;
@@ -194,18 +195,22 @@ fn mcts_agent(state: &Connect4State) -> Connect4Action {
     // Pick the action with the highest win rate.
     let player = state.next_player;
 
+    let _span = span!(Level::TRACE, "mcts agent turn").entered();
+
     (0..COLS)
         .into_par_iter()
         .map(|col| Connect4Action { column: col })
         .filter(|action| check_action(state, action))
         .map(|action| {
+            let _span = span!(Level::TRACE, "mcts action", col = action.column).entered();
             let mut next_state = state.clone();
             apply_action(&mut next_state, &action).unwrap();
 
-            // Simulate 100 games from this action.
+            // Simulate 10000 games from this action.
             let score = (0..100)
                 .into_par_iter()
-                .map(move |_| {
+                .map(move |i| {
+                    let _span = span!(Level::TRACE, "mcts simulation", i = i).entered();
                     let mut state = next_state.clone();
                     match play(&mut state, rand_agent, rand_agent).unwrap() {
                         Connect4Result::Winner(winner) => {
@@ -234,7 +239,17 @@ fn mcts_agent(state: &Connect4State) -> Connect4Action {
 // 1.82s for 100 with rayon everything, kewl
 // 1.8 if I make the main par too, obv output out of order now
 fn main() {
+    println!("begin");
+
+    use tracing_chrome::ChromeLayerBuilder;
+    use tracing_subscriber::{prelude::*, registry::Registry};
+
+    let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
+    tracing_subscriber::registry().with(chrome_layer).init();
+
     (0..100).into_par_iter().for_each(|i| {
+        let span = span!(Level::TRACE, "Game", i = i);
+        _ = span.enter();
         let mut state = Connect4State::default();
         let result = play(&mut state, rand_agent, mcts_agent).unwrap();
         println!("Game {}: {:?}", i, result);
