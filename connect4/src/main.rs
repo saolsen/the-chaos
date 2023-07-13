@@ -146,14 +146,11 @@ pub fn apply_action(
         let cell = &mut state.board[action.column * ROWS + row];
         if cell.is_none() {
             *cell = Some(state.next_player);
-            break;
-        }
-        if row == ROWS - 1 {
-            return Err(FullColumn(action.column));
+            state.next_player = 1 - state.next_player;
+            return Ok(check_state(state));
         }
     }
-    state.next_player = 1 - state.next_player;
-    Ok(check_state(state))
+    Err(FullColumn(action.column))
 }
 
 fn play(
